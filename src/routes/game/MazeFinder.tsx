@@ -73,7 +73,7 @@ export default function MazeFinder() {
   const mazeRef     = useRef<number[][]>([])
   const timeLeftRef = useRef(0)
   const scoreRef    = useRef(0)
-  const timerRef    = useRef<ReturnType<typeof setInterval>>()
+  const timerRef    = useRef<ReturnType<typeof setInterval>>(undefined)
 
   // 화면 크기에 따라 셀 크기 결정
   const cellSize = useMemo(() => {
