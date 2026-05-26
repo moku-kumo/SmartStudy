@@ -5,36 +5,46 @@ import { motion } from 'framer-motion'
 import { playCorrect, playWrong } from '@/lib/audio'
 import { useGameTimer } from '@/hooks/useGameTimer'
 
-// -- Road generation --
-interface Segment { curve: number }
-
-function generateRoad(length: number, difficulty: number): Segment[] {
-  const segs: Segment[] = []
-  let curve = 0
-  for (let i = 0; i < length; i++) {
-    const maxDelta = 0.02 + difficulty * 0.012
-    curve += (Math.random() - 0.5) * maxDelta * 2
-    curve = Math.max(-1, Math.min(1, curve)) * 0.95
-    segs.push({ curve })
+// -- Road: array of x-offsets for center of road --
+function generateRoad(length: number, difficulty: number): number[] {
+  const road: number[] = []
+  let x = 0
+  let dx = 0
+  // Use sine-based curves for smooth roads
+  const numCurves = Math.floor(length / 40) + 5
+  const curves: { start: number; len: number; amp: number }[] = []
+  for (let c = 0; c < numCurves; c++) {
+    const start = Math.floor((c / numCurves) * length)
+    const len = 35 + Math.floor(Math.random() * 50)
+    const amp = (0.6 + Math.random() * 1.0) * difficulty * 0.7 * (Math.random() > 0.5 ? 1 : -1)
+    curves.push({ start, len, amp })
   }
-  return segs
+  for (let i = 0; i < length; i++) {
+    let target = 0
+    for (const c of curves) {
+      if (i >= c.start && i < c.start + c.len) {
+        const t = (i - c.start) / c.len
+        target += c.amp * Math.sin(t * Math.PI)
+      }
+    }
+    target = Math.max(-3, Math.min(3, target))
+    // Smooth interpolation
+    dx = (target - x) * 0.12
+    x += dx
+    road.push(x)
+  }
+  return road
 }
 
-// -- Levels --
 const LEVELS = [
-  { speed: 80, length: 500, difficulty: 1, tolerance: 0.5, label: '쉼움 🟢' },
-  { speed: 120, length: 600, difficulty: 2, tolerance: 0.38, label: '보통 🟡' },
-  { speed: 160, length: 700, difficulty: 3, tolerance: 0.28, label: '어려움 🔴' },
+  { speed: 200, length: 500, difficulty: 2.5, roadW: 50, label: '쉬움 🟢' },
+  { speed: 270, length: 650, difficulty: 3.5, roadW: 38, label: '보통 🟡' },
+  { speed: 340, length: 800, difficulty: 4.5, roadW: 30, label: '어려움 🔴' },
 ]
 
-const W = 340
-const H = 480
-const ROAD_W = 0.45
-const DRAW_DIST = 80
-
-function getScale(i: number): number {
-  return 1 / (1 + i * 0.08)
-}
+const W = 320
+const H = 520
+const ROWS = 60 // visible road rows
 
 type Phase = 'idle' | 'playing' | 'done'
 
@@ -48,14 +58,13 @@ export default function Sewing() {
   const [maxCombo, setMaxCombo] = useState(0)
   const [lives, setLives] = useState(3)
   const [progress, setProgress] = useState(0)
-  const [playerX, setPlayerX] = useState(0)
   const [steer, setSteer] = useState(0)
   const [speed, setSpeed] = useState(0)
 
   const phaseRef = useRef<Phase>('idle')
-  const roadRef = useRef<Segment[]>([])
+  const roadRef = useRef<number[]>([])
   const posRef = useRef(0)
-  const playerXRef = useRef(0)
+  const bikeXRef = useRef(W / 2)
   const steerRef = useRef(0)
   const frameRef = useRef<number>(undefined)
   const lastTimeRef = useRef(0)
@@ -67,12 +76,12 @@ export default function Sewing() {
   const hitCooldown = useRef(0)
   const levelRef = useRef(0)
   const speedRef = useRef(0)
+  const shakeRef = useRef(0)
 
   const handleStart = useCallback((lvl: number) => {
-    const road = generateRoad(LEVELS[lvl].length, LEVELS[lvl].difficulty)
-    roadRef.current = road
+    roadRef.current = generateRoad(LEVELS[lvl].length + ROWS, LEVELS[lvl].difficulty)
     posRef.current = 0
-    playerXRef.current = 0
+    bikeXRef.current = W / 2
     steerRef.current = 0
     livesRef.current = 3
     scoreRef.current = 0
@@ -82,11 +91,11 @@ export default function Sewing() {
     hitCooldown.current = 0
     levelRef.current = lvl
     speedRef.current = LEVELS[lvl].speed
+    shakeRef.current = 0
 
     setLevel(lvl)
     setPhase('playing')
     phaseRef.current = 'playing'
-    setPlayerX(0)
     setSteer(0)
     setLives(3)
     setScore(0)
@@ -98,158 +107,126 @@ export default function Sewing() {
     frameRef.current = requestAnimationFrame(gameLoop)
   }, [])
 
-  const drawRoad = useCallback((currentSeg: number, lvlIdx: number) => {
+  const drawFrame = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
     const road = roadRef.current
-    const px = playerXRef.current
+    const pos = posRef.current
+    const seg = Math.floor(pos)
+    const frac = pos - seg
+    const lvl = LEVELS[levelRef.current]
+    const roadW = lvl.roadW
+    const bikeX = bikeXRef.current
+    const rowH = H / ROWS
 
-    // Sky
-    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.35)
-    sky.addColorStop(0, '#1a1a2e')
-    sky.addColorStop(1, '#16213e')
-    ctx.fillStyle = sky
-    ctx.fillRect(0, 0, W, H * 0.35)
-
-    // Stars in sky
-    ctx.fillStyle = '#fff'
-    for (let i = 0; i < 20; i++) {
-      const sx = (i * 73 + currentSeg * 0.1) % W
-      const sy = (i * 37) % (H * 0.3)
-      ctx.globalAlpha = 0.3 + Math.sin(i + currentSeg * 0.05) * 0.3
-      ctx.fillRect(sx, sy, 1.5, 1.5)
+    // Shake
+    ctx.save()
+    if (shakeRef.current > 0) {
+      ctx.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 4)
     }
-    ctx.globalAlpha = 1
 
-    // Ground
-    ctx.fillStyle = '#1a1a1a'
-    ctx.fillRect(0, H * 0.35, W, H * 0.65)
+    // Background (grass/dirt)
+    ctx.fillStyle = '#2d5a27'
+    ctx.fillRect(0, 0, W, H)
 
-    // Road segments (back to front)
-    let cumulX = 0
-    const segH = H / DRAW_DIST
+    // Draw road rows (top to bottom = far to near)
+    for (let i = 0; i < ROWS; i++) {
+      const roadIdx = seg + (ROWS - i)
+      if (roadIdx < 0 || roadIdx >= road.length) continue
 
-    for (let i = DRAW_DIST - 1; i >= 0; i--) {
-      const segIdx = currentSeg + i
-      const seg = road[Math.min(segIdx, road.length - 1)]
-      if (!seg) continue
-
-      const scale = getScale(i)
-      const y = H - (DRAW_DIST - i) * segH * 0.65 - 40
-
-      cumulX += seg.curve * scale * 14
-
-      const centerX = W / 2 + (cumulX - px * 90) * scale
-      const roadHalfW = ROAD_W * W * 0.5 * scale
+      const roadCenterOffset = road[roadIdx] * 30 // scale to pixels
+      const y = i * rowH - frac * rowH
+      const centerX = W / 2 + roadCenterOffset
 
       // Asphalt
-      const isStripe = (segIdx % 6) < 3
-      ctx.fillStyle = isStripe ? '#2d2d2d' : '#333333'
-      ctx.fillRect(centerX - roadHalfW, y, roadHalfW * 2, segH + 1)
+      const stripe = (roadIdx % 4) < 2
+      ctx.fillStyle = stripe ? '#3a3a3a' : '#424242'
+      ctx.fillRect(centerX - roadW / 2, y, roadW, rowH + 1)
 
-      // Center dashed line
-      if ((segIdx % 4) < 2 && scale > 0.15) {
+      // White edge lines
+      ctx.fillStyle = '#ddd'
+      ctx.fillRect(centerX - roadW / 2 - 2, y, 3, rowH + 1)
+      ctx.fillRect(centerX + roadW / 2 - 1, y, 3, rowH + 1)
+
+      // Center dashes
+      if ((roadIdx % 6) < 3) {
         ctx.fillStyle = '#FFD700'
-        const dashW = Math.max(1, 3 * scale)
-        ctx.fillRect(centerX - dashW / 2, y, dashW, segH * 0.6)
+        ctx.fillRect(centerX - 1, y, 2, rowH * 0.5)
       }
 
-      // Road edges (white lines)
-      ctx.fillStyle = '#ffffff'
-      const edgeW = Math.max(1, 3 * scale)
-      ctx.fillRect(centerX - roadHalfW, y, edgeW, segH + 1)
-      ctx.fillRect(centerX + roadHalfW - edgeW, y, edgeW, segH + 1)
-
-      // Roadside rumble strips
-      if ((segIdx % 3) === 0 && scale > 0.2) {
-        ctx.fillStyle = '#ff4444'
-        ctx.fillRect(centerX - roadHalfW - 4 * scale, y, 4 * scale, segH)
-        ctx.fillRect(centerX + roadHalfW, y, 4 * scale, segH)
+      // Rumble strips
+      if ((roadIdx % 3) === 0) {
+        ctx.fillStyle = '#cc3333'
+        ctx.fillRect(centerX - roadW / 2 - 6, y, 4, rowH + 1)
+        ctx.fillRect(centerX + roadW / 2 + 2, y, 4, rowH + 1)
       }
     }
 
-    // Motorcycle (player)
-    const bikeX = W / 2
-    const bikeY = H - 80
-    const lean = -steerRef.current * 12
+    // Bike position (fixed at bottom area)
+    const bikeY = H - 70
+    const leanAngle = steerRef.current * 15
 
     ctx.save()
     ctx.translate(bikeX, bikeY)
-    ctx.rotate(lean * Math.PI / 180)
+    ctx.rotate(leanAngle * Math.PI / 180)
 
-    // Wheel back
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)'
+    ctx.beginPath()
+    ctx.ellipse(0, 20, 14, 5, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Back wheel
     ctx.fillStyle = '#111'
     ctx.beginPath()
-    ctx.ellipse(0, 18, 12, 6, 0, 0, Math.PI * 2)
+    ctx.ellipse(0, 14, 10, 5, 0, 0, Math.PI * 2)
     ctx.fill()
-    ctx.strokeStyle = '#444'
-    ctx.lineWidth = 2
-    ctx.stroke()
 
-    // Body frame
+    // Body
     ctx.fillStyle = '#e63946'
-    ctx.beginPath()
-    ctx.moveTo(-6, 10)
-    ctx.lineTo(-4, -15)
-    ctx.lineTo(6, -20)
-    ctx.lineTo(8, -5)
-    ctx.lineTo(6, 10)
-    ctx.closePath()
-    ctx.fill()
+    ctx.fillRect(-5, -10, 10, 22)
+    ctx.fillStyle = '#b71c1c'
+    ctx.fillRect(-4, -4, 8, 10)
 
-    // Handlebar
-    ctx.strokeStyle = '#ccc'
-    ctx.lineWidth = 3
+    // Front wheel
+    ctx.fillStyle = '#111'
     ctx.beginPath()
-    ctx.moveTo(-10, -18)
-    ctx.lineTo(10, -18)
-    ctx.stroke()
+    ctx.ellipse(0, -12, 8, 4, 0, 0, Math.PI * 2)
+    ctx.fill()
 
     // Headlight
     ctx.fillStyle = '#FFD700'
     ctx.beginPath()
-    ctx.arc(2, -22, 3, 0, Math.PI * 2)
+    ctx.arc(0, -16, 3, 0, Math.PI * 2)
     ctx.fill()
 
-    // Rider silhouette
+    // Rider
     ctx.fillStyle = '#222'
     ctx.beginPath()
-    ctx.ellipse(0, -30, 7, 10, 0, 0, Math.PI * 2)
+    ctx.ellipse(0, -2, 6, 8, 0, 0, Math.PI * 2)
     ctx.fill()
-    // Helmet
     ctx.fillStyle = '#e63946'
     ctx.beginPath()
-    ctx.arc(0, -38, 7, 0, Math.PI * 2)
+    ctx.arc(0, -10, 5, 0, Math.PI * 2)
     ctx.fill()
-    // Visor
-    ctx.fillStyle = '#111'
-    ctx.fillRect(-5, -38, 10, 4)
 
     ctx.restore()
 
-    // Speed lines
-    if (speedRef.current > 100) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)'
-      ctx.lineWidth = 1
-      for (let i = 0; i < 8; i++) {
-        const lx = bikeX + (Math.random() - 0.5) * 60
-        const ly = bikeY - 30 + Math.random() * 40
-        ctx.beginPath()
-        ctx.moveTo(lx, ly)
-        ctx.lineTo(lx, ly + 15 + Math.random() * 10)
-        ctx.stroke()
+    // Off-road indicator
+    const currentRoadIdx = seg + 5
+    if (currentRoadIdx < road.length) {
+      const roadCenter = W / 2 + road[currentRoadIdx] * 30
+      const dist = Math.abs(bikeX - roadCenter)
+      if (dist > roadW / 2 * 0.7) {
+        ctx.fillStyle = 'rgba(255, 0, 0, 0.1)'
+        ctx.fillRect(0, 0, W, H)
       }
     }
 
-    // Out-of-bounds warning
-    const lvl = LEVELS[lvlIdx]
-    if (Math.abs(playerXRef.current) > lvl.tolerance * 0.75) {
-      ctx.fillStyle = 'rgba(255, 50, 50, 0.12)'
-      ctx.fillRect(0, 0, W, H)
-    }
+    ctx.restore()
   }, [])
 
   const gameLoop = useCallback((time: number) => {
@@ -261,30 +238,35 @@ export default function Sewing() {
     const lvlIdx = levelRef.current
     const lvl = LEVELS[lvlIdx]
 
-    // Gradually speed up
-    speedRef.current = Math.min(lvl.speed * 1.8, lvl.speed + posRef.current * 0.02)
+    // Speed gradually increases
+    speedRef.current = Math.min(lvl.speed * 1.6, lvl.speed + posRef.current * 0.015)
     setSpeed(Math.floor(speedRef.current))
 
-    posRef.current += speedRef.current * dt
+    // Advance position
+    posRef.current += speedRef.current * dt * 0.15
     const seg = Math.floor(posRef.current)
     setProgress(Math.min(1, seg / lvl.length))
 
+    // Steer bike
+    bikeXRef.current += steerRef.current * 220 * dt
+    bikeXRef.current = Math.max(20, Math.min(W - 20, bikeXRef.current))
+
+    // Check if on road
+    const checkIdx = seg + 5 // check slightly ahead where bike is visually
     const road = roadRef.current
-    const currentCurve = road[Math.min(seg, road.length - 1)]?.curve ?? 0
-    // Curve pushes player outward
-    playerXRef.current += currentCurve * dt * 2.8
-    // Player steering input
-    playerXRef.current += steerRef.current * dt * 3.2
-    playerXRef.current = Math.max(-1.5, Math.min(1.5, playerXRef.current))
+    const roadCenter = W / 2 + (road[Math.min(checkIdx, road.length - 1)] ?? 0) * 30
+    const dist = Math.abs(bikeXRef.current - roadCenter)
+    const halfRoad = lvl.roadW / 2
 
-    setPlayerX(playerXRef.current)
-
-    // Off-road check
     hitCooldown.current = Math.max(0, hitCooldown.current - dt)
-    if (Math.abs(playerXRef.current) > lvl.tolerance) {
+    shakeRef.current = Math.max(0, shakeRef.current - dt)
+
+    if (dist > halfRoad) {
+      // Off road!
       if (hitCooldown.current <= 0) {
-        hitCooldown.current = 0.6
-        livesRef.current -= 1
+        hitCooldown.current = 0.7
+        shakeRef.current = 0.3
+        livesRef.current--
         comboRef.current = 0
         setLives(livesRef.current)
         setCombo(0)
@@ -298,8 +280,9 @@ export default function Sewing() {
         }
       }
     } else {
-      scoreRef.current += Math.round(speedRef.current * dt * 0.8)
-      comboRef.current = Math.min(99, comboRef.current + Math.round(dt * 4))
+      // On road - score
+      scoreRef.current += Math.round(speedRef.current * dt * 0.5)
+      comboRef.current = Math.min(99, comboRef.current + Math.round(dt * 3))
       if (comboRef.current > maxComboRef.current) maxComboRef.current = comboRef.current
       setScore(scoreRef.current)
       setCombo(comboRef.current)
@@ -315,11 +298,11 @@ export default function Sewing() {
       return
     }
 
-    drawRoad(seg, lvlIdx)
+    drawFrame()
     frameRef.current = requestAnimationFrame(gameLoop)
-  }, [drawRoad])
+  }, [drawFrame])
 
-  // Pointer steering
+  // Pointer controls
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     e.preventDefault()
     const rect = canvasRef.current?.getBoundingClientRect()
@@ -367,8 +350,6 @@ export default function Sewing() {
   }, [])
 
   useEffect(() => () => { if (frameRef.current) cancelAnimationFrame(frameRef.current) }, [])
-
-  const isOutOfBounds = Math.abs(playerX) > (LEVELS[level]?.tolerance ?? 0.5) * 0.75
 
   return (
     <div className="min-h-dvh bg-gradient-to-b from-gray-900 to-gray-800 flex flex-col p-4 pt-[max(1rem,env(safe-area-inset-top))]">
@@ -431,8 +412,8 @@ export default function Sewing() {
               ref={canvasRef}
               width={W}
               height={H}
-              className={`rounded-2xl shadow-lg border-2 ${isOutOfBounds ? 'border-red-500' : 'border-gray-700'} transition-colors`}
-              style={{ touchAction: 'none' }}
+              className={`rounded-2xl shadow-lg border-2 border-gray-700 transition-colors`}
+              style={{ touchAction: 'none', maxHeight: '60vh', width: 'auto' }}
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
