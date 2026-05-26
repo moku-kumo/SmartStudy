@@ -1,0 +1,16 @@
+{
+  "name": "SmartStudy",
+  "short_name": "SmartStudy",
+  "description": "6세 어린이를 위한 종합 학습 앱",
+  "lang": "ko",
+  "start_url": "/smart-study/",
+  "scope": "/smart-study/",
+  "display": "standalone",
+  "theme_color": "#fff7ed",
+  "background_color": "#fff7ed",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
