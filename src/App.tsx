@@ -16,6 +16,7 @@ import WhackAMole from '@/routes/game/WhackAMole'
 import DodgePoop from '@/routes/game/DodgePoop'
 import SpotDiff from '@/routes/game/SpotDiff'
 import MazeFinder from '@/routes/game/MazeFinder'
+import Sewing from '@/routes/game/Sewing'
 import ParentDashboard from '@/routes/ParentDashboard'
 import Phonics from '@/routes/english/Phonics'
 
@@ -40,6 +41,7 @@ function App() {
         <Route path="/game/dodge" element={<DodgePoop />} />
         <Route path="/game/spot" element={<SpotDiff />} />
         <Route path="/game/maze" element={<MazeFinder />} />
+        <Route path="/game/sewing" element={<Sewing />} />
         <Route path="/parent" element={<ParentDashboard />} />
         <Route path="/english/phonics" element={<Phonics />} />
       </Routes>

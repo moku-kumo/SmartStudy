@@ -17,6 +17,7 @@ const games = [
   { to: '/game/dodge', emoji: '💩', label: '똥 피하기' },
   { to: '/game/spot', emoji: '🔍', label: '틀린그림찾기' },
   { to: '/game/maze', emoji: '🌀', label: '미로찾기' },
+  { to: '/game/sewing', emoji: '🪡', label: '바느질' },
 ]
 
 export default function GameHome() {
