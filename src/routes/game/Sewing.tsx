@@ -10,11 +10,12 @@ function generateRoad(length: number, difficulty: number): number[] {
   const road: number[] = []
   let x = 0
   let dx = 0
+  const STRAIGHT_ROWS = 45 // ~3초간 직선 구간
   // Use sine-based curves for smooth roads
   const numCurves = Math.floor(length / 40) + 5
   const curves: { start: number; len: number; amp: number }[] = []
   for (let c = 0; c < numCurves; c++) {
-    const start = Math.floor((c / numCurves) * length)
+    const start = STRAIGHT_ROWS + Math.floor((c / numCurves) * (length - STRAIGHT_ROWS))
     const len = 35 + Math.floor(Math.random() * 50)
     const amp = (0.6 + Math.random() * 1.0) * difficulty * 0.7 * (Math.random() > 0.5 ? 1 : -1)
     curves.push({ start, len, amp })
