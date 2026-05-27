@@ -1,4 +1,4 @@
-const CACHE_NAME = 'smartstudy-v4'
+const CACHE_NAME = 'smartstudy-v5'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
